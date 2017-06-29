@@ -86,7 +86,7 @@ function UpdateTimers() {
         if (enroute[x].estimatedarrivaltime - secondsBeforeArrival < now) {
             continue;
         }
-        if (enroute[x].estimatedarrivaltime < (now + 3600) || enroute[x].actualdeparturetime) {
+        if (enroute[x].estimatedarrivaltime < (now + 3600) && enroute[x].actualdeparturetime) {
             t = (enroute[x].estimatedarrivaltime - secondsBeforeArrival - now);
             console.log('Setting timer for ' + enroute[x].ident + ' in ' + t + ' seconds');
             identTimers[enroute[x].ident] = setTimeout(AlertEnroute.bind(null, enroute[x]), t * 1000);
