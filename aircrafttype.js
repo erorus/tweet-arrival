@@ -59,7 +59,6 @@ AircraftType.prototype.getAirline = function (flightName, callback) {
     if (m = flightName.match(/^([A-Z]{3,5})\d*$/)) {
         airline = m[1];
     } else {
-        console.log('nope: ' + flightName);
         return callback(null, {});
     }
 
