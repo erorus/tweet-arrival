@@ -108,8 +108,10 @@ function AlertEnroute(flight) {
 
         var str = '';
         if (airline.shortname) {
-            str += airline.shortname + ': ';
+            str += airline.shortname + ' ';
         }
+        str += flight.ident + ': ';
+
         if (info.manufacturer) {
             str += info.manufacturer + ' ';
             if (info.type) {
