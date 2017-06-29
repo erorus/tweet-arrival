@@ -97,6 +97,8 @@ function UpdateTimers() {
 }
 
 function AlertEnroute(flight) {
+    delete identTimers[flight.ident];
+
     async.parallel([
         aircrafttype.getImage.bind(aircrafttype, flight.aircrafttype),
         aircrafttype.getInfo.bind(aircrafttype, flight.aircrafttype),
