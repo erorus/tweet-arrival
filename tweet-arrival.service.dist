@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=nobody ## CHANGE THIS
 ExecStart=/usr/bin/node /__PATH__/tweet-arrival/index.js ## INSERT PATH
+EnvironmentFile=/__PATH__/tweet-arrival/environment.txt
 Restart=on-abort
 RestartSec=600
 
