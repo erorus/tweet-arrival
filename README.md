@@ -6,17 +6,13 @@ This will tweet imminent flight arrivals for a given airport, including the name
 
 Uses the [Flightaware API](http://flightaware.com/commercial/flightxml/), for which you will need your own API key.
 
-Will use the Twitter API, for which you'll need an API key and secret for the tweeting account.
+Uses the Twitter API, for which you'll need an API key and secret for the tweeting account.
 
 ## Configuration/Setup
 
 Set the environment variables in `environment.txt`.
 
 You can run it as a systemd service with the supplied `tweet-arrival.service` template.
-
-## Status
-
-Work in progress. No Twitter integration yet.
 
 ## License
 

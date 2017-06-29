@@ -2,9 +2,17 @@ const API_URL = 'http://' + process.env.FLIGHTAWARE_CREDENTIALS + '@flightxml.fl
 
 const aircrafttype = new (require('./aircrafttype'))(API_URL),
     http = require('http'),
-    async = require('async');
+    async = require('async'),
+    Twitter = require('twitter');
 
 const secondsBeforeArrival = process.env.SECONDS_AHEAD;
+
+var twitter = new Twitter({
+    consumer_key: process.env.TWITTER_CONSUMER_KEY,
+    consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
+    access_token_key: process.env.TWITTER_ACCESS_TOKEN_KEY,
+    access_token_secret: process.env.TWITTER_ACCESS_TOKEN_SECRET
+});
 
 var enroute;
 var identTimers = {};
@@ -83,7 +91,8 @@ function UpdateTimers() {
             console.log('Setting timer for ' + enroute[x].ident + ' in ' + t + ' seconds');
             identTimers[enroute[x].ident] = setTimeout(AlertEnroute.bind(null, enroute[x]), t * 1000);
         }
-        //AlertEnroute(enroute[x]);
+
+        //return AlertEnroute(enroute[x]);
     }
 }
 
@@ -112,12 +121,44 @@ function AlertEnroute(flight) {
         str += 'from ' + flight.originCity + ' (' + flight.origin + ') ';
         str += 'arriving at ' + (new Date(flight.estimatedarrivaltime * 1000)).toLocaleTimeString();
 
-        SendTweet(str, img ? [img] : []);
+        SendTweet(str, img);
     });
 }
 
-function SendTweet(message, images) { // TODO
+function SendTweet(message, image) {
     console.log('Tweet: ' + message);
+
+    var updateParams = {
+        status: message,
+        enable_dm_commands: false
+    };
+
+    var f = function(params, err, tweet, response) {
+        if (err) {
+            console.log(err);
+            return;
+        }
+
+        twitter.post('statuses/update', params, function(err, tweet, response) {
+            if (err) {
+                console.log(err);
+            }
+        });
+    };
+
+    if (!image) {
+        return f(updateParams);
+    }
+
+    twitter.post('media/upload', { media: image }, function(err, media, response) {
+        if (err) {
+            console.log(err);
+            return;
+        }
+
+        updateParams.media_ids = media.media_id_string;
+        f(updateParams);
+    });
 }
 
 function typeImageTest() {
