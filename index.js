@@ -91,7 +91,7 @@ function SetNextEnrouteTimerBy(delaySeconds) {
         enrouteTimer.timer = setTimeout(FetchEnroute, delaySeconds * 1000);
         console.log('Next enroute fetch in ' + delaySeconds + ' seconds');
     } else {
-        console.log('Ignoring enroute fetch request in ' + delaySeconds ' seconds, will fetch in ' + (enrouteTimer.when - now) + ' seconds instead');
+        console.log('Ignoring enroute fetch request in ' + delaySeconds + ' seconds, will fetch in ' + (enrouteTimer.when - now) + ' seconds instead');
     }
 }
 
