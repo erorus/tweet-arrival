@@ -8,6 +8,7 @@ User=nobody ## CHANGE THIS
 ExecStart=/usr/bin/node /__PATH__/tweet-arrival/index.js ## INSERT PATH
 EnvironmentFile=/__PATH__/tweet-arrival/environment.txt
 Restart=on-abort
+RestartForceExitStatus=0
 RestartSec=600
 
 [Install]

@@ -22,6 +22,10 @@ var enrouteTimer = {
     when: 0,
 };
 
+process.on('exit', function(err) {
+    console.log('Exiting!');
+});
+
 FetchEnroute();
 //typeImageTest();
 
