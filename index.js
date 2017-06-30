@@ -17,17 +17,22 @@ var twitter = new Twitter({
 var enroute;
 var identTimers = {};
 
+var enrouteTimer = {
+    timer: undefined,
+    when: 0,
+};
+
 FetchEnroute();
 //typeImageTest();
 
 function FetchEnroute() {
-    var retryDelay = 10 * 60 * 1000;
+    var retryDelay = 10 * 60;
 
     console.log('Fetching enroute data');
     http.get(API_URL + 'Enroute?airport=' + process.env.AIRPORT, function(res) {
         if (res.statusCode != 200) {
             console.log('Received error ' + res.statusCode + ' fetching Enroute data');
-            setTimeout(FetchEnroute, retryDelay);
+            SetNextEnrouteTimerBy(retryDelay);
             return;
         }
 
@@ -43,13 +48,13 @@ function FetchEnroute() {
                 var json = JSON.parse(data);
             } catch (e) {
                 console.log('Could not parse Enroute json!');
-                setTimeout(FetchEnroute, retryDelay);
+                SetNextEnrouteTimerBy(retryDelay);
                 return;
             }
 
             if (!json.hasOwnProperty('EnrouteResult')) {
                 console.log('Enroute json did not include enroute result!');
-                setTimeout(FetchEnroute, retryDelay);
+                SetNextEnrouteTimerBy(retryDelay);
                 return;
             }
 
@@ -62,11 +67,25 @@ function FetchEnroute() {
                 refreshSoon |= (enroute[x].estimatedarrivaltime < (now + 3600))
             }
 
-            setTimeout(FetchEnroute, (refreshSoon ? 30 : 60) * 60 * 1000);
+            SetNextEnrouteTimerBy((refreshSoon ? 30 : 60) * 60);
 
             UpdateTimers();
         });
     });
+}
+
+function SetNextEnrouteTimerBy(delaySeconds) {
+    if (delaySeconds <= 0) {
+        return;
+    }
+    var now = Math.floor((new Date()).valueOf() / 1000);
+    if (enrouteTimer.when < now || enrouteTimer.when > now + delaySeconds) {
+        if (enrouteTimer.when) {
+            clearTimeout(enrouteTimer.timer);
+        }
+        enrouteTimer.when = now + delaySeconds;
+        enrouteTimer.timer = setTimeout(FetchEnroute, delaySeconds * 1000);
+    }
 }
 
 function UpdateTimers() {
@@ -90,9 +109,8 @@ function UpdateTimers() {
             t = (enroute[x].estimatedarrivaltime - secondsBeforeArrival - now);
             console.log('Setting timer for ' + enroute[x].ident + ' in ' + t + ' seconds');
             identTimers[enroute[x].ident] = setTimeout(AlertEnroute.bind(null, enroute[x]), t * 1000);
+            SetNextEnrouteTimerBy(t - 5 * 60);
         }
-
-        //return AlertEnroute(enroute[x]);
     }
 }
 
