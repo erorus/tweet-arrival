@@ -15,6 +15,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "async": "^2.5.0",
+    "flightaware.js": "github:erorus/flightaware.js",
     "jsdom": "<10",
     "twitter": "^1.7.1"
   }

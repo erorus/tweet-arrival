@@ -1,22 +1,18 @@
-const API_URL = 'http://' + process.env.FLIGHTAWARE_CREDENTIALS + '@flightxml.flightaware.com/json/FlightXML2/';
-
-const aircrafttype = new (require('./aircrafttype'))(API_URL),
-    http = require('http'),
+const fa = new (require('./flightaware-cached'))(process.env.FLIGHTAWARE_USER, process.env.FLIGHTAWARE_KEY),
+    aircraftImage = require('./aircraft-image'),
     async = require('async'),
     Twitter = require('twitter');
 
 const secondsBeforeArrival = process.env.SECONDS_AHEAD;
 
-var twitter = new Twitter({
+var twitter = !process.env.TWITTER_CONSUMER_KEY ? false : new Twitter({
     consumer_key: process.env.TWITTER_CONSUMER_KEY,
     consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
     access_token_key: process.env.TWITTER_ACCESS_TOKEN_KEY,
     access_token_secret: process.env.TWITTER_ACCESS_TOKEN_SECRET
 });
 
-var enroute;
 var identTimers = {};
-
 var enrouteTimer = {
     timer: undefined,
     when: 0,
@@ -28,53 +24,55 @@ process.on('exit', function(err) {
 
 FetchEnroute();
 //typeImageTest();
+//typeInfoTest();
 
 function FetchEnroute() {
     var retryDelay = 10 * 60;
 
     console.log('Fetching enroute data');
-    http.get(API_URL + 'Enroute?airport=' + process.env.AIRPORT, function(res) {
-        if (res.statusCode != 200) {
-            console.log('Received error ' + res.statusCode + ' fetching Enroute data');
+    fa.Enroute({airport: process.env.AIRPORT}, function(err, res) {
+        if (err) {
+            console.log('Could not fetch enroute!');
+            console.log(err);
             SetNextEnrouteTimerBy(retryDelay);
             return;
         }
 
-        res.setEncoding('utf8');
+        var enroute = res.enroute ? res.enroute : [];
 
-        var data = '';
-        res.on('data', function(chunk) {
-            data += chunk;
-        });
+        var t, now = Math.floor((new Date()).valueOf() / 1000);
+        var refreshSoon = false;
 
-        res.on('end', function() {
-            try {
-                var json = JSON.parse(data);
-            } catch (e) {
-                console.log('Could not parse Enroute json!');
-                SetNextEnrouteTimerBy(retryDelay);
-                return;
+        for (var x = 0; x < enroute.length; x++) {
+            refreshSoon |= (enroute[x].estimatedarrivaltime < (now + 3600))
+        }
+
+        SetNextEnrouteTimerBy((refreshSoon ? 30 : 60) * 60);
+
+
+        // add enroute timers
+        for (var k in identTimers) {
+            if (!identTimers.hasOwnProperty(k)) {
+                continue;
             }
 
-            if (!json.hasOwnProperty('EnrouteResult')) {
-                console.log('Enroute json did not include enroute result!');
-                SetNextEnrouteTimerBy(retryDelay);
-                return;
+            console.log('Clearing timer for ' + k);
+            clearTimeout(identTimers[k]);
+        }
+
+        identTimers = {};
+        for (var x = 0; x < enroute.length; x++) {
+            if (enroute[x].estimatedarrivaltime - secondsBeforeArrival < now) {
+                continue;
             }
-
-            enroute = json.EnrouteResult.enroute;
-
-            var now = Math.floor((new Date()).valueOf() / 1000);
-            var refreshSoon = false;
-
-            for (var x = 0; x < enroute.length; x++) {
-                refreshSoon |= (enroute[x].estimatedarrivaltime < (now + 3600))
+            if (enroute[x].estimatedarrivaltime < (now + 3600) && enroute[x].actualdeparturetime) {
+                t = (enroute[x].estimatedarrivaltime - secondsBeforeArrival - now);
+                console.log('Setting timer for ' + enroute[x].ident + ' in ' + t + ' seconds');
+                identTimers[enroute[x].ident] = setTimeout(AlertEnroute.bind(null, enroute[x]), t * 1000);
+                SetNextEnrouteTimerBy(t - 5 * 60);
             }
+        }
 
-            SetNextEnrouteTimerBy((refreshSoon ? 30 : 60) * 60);
-
-            UpdateTimers();
-        });
     });
 }
 
@@ -95,46 +93,23 @@ function SetNextEnrouteTimerBy(delaySeconds) {
     }
 }
 
-function UpdateTimers() {
-    for (var k in identTimers) {
-        if (!identTimers.hasOwnProperty(k)) {
-            continue;
-        }
-
-        console.log('Clearing timer for ' + k);
-        clearTimeout(identTimers[k]);
-    }
-
-    var t, now = Math.floor((new Date()).valueOf() / 1000);
-
-    identTimers = {};
-    for (var x = 0; x < enroute.length; x++) {
-        if (enroute[x].estimatedarrivaltime - secondsBeforeArrival < now) {
-            continue;
-        }
-        if (enroute[x].estimatedarrivaltime < (now + 3600) && enroute[x].actualdeparturetime) {
-            t = (enroute[x].estimatedarrivaltime - secondsBeforeArrival - now);
-            console.log('Setting timer for ' + enroute[x].ident + ' in ' + t + ' seconds');
-            identTimers[enroute[x].ident] = setTimeout(AlertEnroute.bind(null, enroute[x]), t * 1000);
-            SetNextEnrouteTimerBy(t - 5 * 60);
-        }
-    }
-}
-
 function AlertEnroute(flight) {
     delete identTimers[flight.ident];
 
+    var airlineCode = getAirlineFromIdent(flight.ident);
+    var getAirline = airlineCode ? fa.AirlineInfo.bind(fa, airlineCode) : (function(cb) { return cb(false); });
+
     async.parallel([
-        aircrafttype.getImage.bind(aircrafttype, flight.aircrafttype),
-        aircrafttype.getInfo.bind(aircrafttype, flight.aircrafttype),
-        aircrafttype.getAirline.bind(aircrafttype, flight.ident),
+        aircraftImage.getAircraftImage.bind(aircraftImage, { type: flight.aircrafttype }),
+        fa.AircraftType.bind(fa, flight.aircrafttype),
+        getAirline,
     ], function(err, results) {
         var img = results[0];
         var info = results[1];
         var airline = results[2];
 
         var str = '';
-        if (airline.shortname) {
+        if (airline && airline.shortname) {
             str += airline.shortname + ' ';
         }
         str += flight.ident + ': ';
@@ -156,6 +131,10 @@ function AlertEnroute(flight) {
 
 function SendTweet(message, image) {
     console.log('Tweet: ' + message);
+
+    if (!twitter) {
+        return;
+    }
 
     var updateParams = {
         status: message,
@@ -190,6 +169,14 @@ function SendTweet(message, image) {
     });
 }
 
+function getAirlineFromIdent(ident) {
+    var m;
+    if (m = ident.match(/^([A-Z]{3,5})\d*$/)) {
+        return m[1];
+    }
+    return false;
+}
+
 function typeImageTest() {
     var types = ['C172', 'CRJ9', 'DH8B', 'BE30'];
 
@@ -199,7 +186,7 @@ function typeImageTest() {
     };
 
     for (var x = 0, t; t = types[x]; x++) {
-        aircrafttype.getImage(t, f.bind(null, t));
+        aircraftImage.getAircraftImage({type: t}, f.bind(null, t));
     }
 }
 
@@ -212,6 +199,6 @@ function typeInfoTest() {
     };
 
     for (var x = 0, t; t = types[x]; x++) {
-        aircrafttype.getInfo(t, f.bind(null, t));
+        fa.AircraftType(t, f.bind(null, t));
     }
 }
