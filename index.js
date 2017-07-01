@@ -97,12 +97,55 @@ function AlertEnroute(flight) {
     delete identTimers[flight.ident];
 
     var airlineCode = getAirlineFromIdent(flight.ident);
-    var getAirline = airlineCode ? fa.AirlineInfo.bind(fa, airlineCode) : (function(cb) { return cb(false); });
+
+    if (airlineCode) {
+        if (!flight.hasOwnProperty('faFlightID')) {
+            console.log('getting faFlightID for ' + flight.ident);
+            return fa.GetFlightID(
+                {
+                    ident: flight.ident,
+                    departureTime: flight.filed_departuretime || flight.actualdeparturetime
+                }, function (err, result)
+                {
+                    flight.faFlightID = err ? false : result;
+                    AlertEnroute(flight);
+                }
+            );
+        }
+
+        if (!flight.hasOwnProperty('codeshares')) {
+            console.log('getting codeshares for ' + flight.faFlightID);
+            return fa.AirlineFlightInfo(
+                flight.faFlightID, function (err, result)
+                {
+                    flight.codeshares = err ? [] : result.codeshares;
+                    flight.tailnumber = err ? false : result.tailnumber;
+                    AlertEnroute(flight);
+                }
+            );
+        }
+    }
+
+    if (!airlineCode && !flight.tailnumber) {
+        flight.tailnumber = flight.ident;
+    }
 
     var imageParams = { type: flight.aircrafttype };
-    if (!airlineCode) {
-        imageParams.tail = flight.ident;
+    if (flight.tailnumber) {
+        imageParams.tail = flight.tailnumber;
     }
+
+    if (airlineCode && flight.codeshares) {
+        var flightNum = flight.ident.match(/\d+/)[0];
+        for (var x = 0; x < flight.codeshares.length; x++) {
+            if (flight.codeshares[x].substr(flightNum.length * -1) == flightNum) {
+                airlineCode = getAirlineFromIdent(flight.codeshares[x]);
+                flight.bestCodeshare = flight.codeshares[x];
+                break;
+            }
+        }
+    }
+    var getAirline = airlineCode ? fa.AirlineInfo.bind(fa, airlineCode) : (function(cb) { return cb(false); });
 
     async.parallel([
         aircraftImage.getAircraftImage.bind(aircraftImage, imageParams),
@@ -117,7 +160,7 @@ function AlertEnroute(flight) {
         if (airline && airline.shortname) {
             str += airline.shortname + ' ';
         }
-        str += flight.ident + ': ';
+        str += (flight.bestCodeshare || flight.ident) + ': ';
 
         if (info.manufacturer) {
             str += info.manufacturer + ' ';
@@ -126,6 +169,9 @@ function AlertEnroute(flight) {
             }
         } else {
             str += flight.aircrafttype + ' ';
+        }
+        if (flight.tailnumber) {
+            str += '(' + flight.tailnumber + ') ';
         }
         str += 'from ' + flight.originCity + ' (' + flight.origin + ') ';
         str += 'arriving at ' + (new Date(flight.estimatedarrivaltime * 1000)).toLocaleTimeString();
