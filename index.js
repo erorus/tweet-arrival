@@ -99,8 +99,13 @@ function AlertEnroute(flight) {
     var airlineCode = getAirlineFromIdent(flight.ident);
     var getAirline = airlineCode ? fa.AirlineInfo.bind(fa, airlineCode) : (function(cb) { return cb(false); });
 
+    var imageParams = { type: flight.aircrafttype };
+    if (!airlineCode) {
+        imageParams.tail = flight.ident;
+    }
+
     async.parallel([
-        aircraftImage.getAircraftImage.bind(aircraftImage, { type: flight.aircrafttype }),
+        aircraftImage.getAircraftImage.bind(aircraftImage, imageParams),
         fa.AircraftType.bind(fa, flight.aircrafttype),
         getAirline,
     ], function(err, results) {
