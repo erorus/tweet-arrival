@@ -156,11 +156,13 @@ function AlertEnroute(flight) {
         var info = results[1];
         var airline = results[2];
 
+        var flightName = (flight.bestCodeshare || flight.ident);
+
         var str = '';
         if (airline && airline.shortname) {
             str += airline.shortname + ' ';
         }
-        str += (flight.bestCodeshare || flight.ident) + ': ';
+        str += flightName + ': ';
 
         if (info.manufacturer) {
             str += info.manufacturer + ' ';
@@ -170,7 +172,7 @@ function AlertEnroute(flight) {
         } else {
             str += flight.aircrafttype + ' ';
         }
-        if (flight.tailnumber) {
+        if (flight.tailnumber && flight.tailnumber != flightName) {
             str += '(' + flight.tailnumber + ') ';
         }
         str += 'from ' + flight.originCity + ' (' + flight.origin + ') ';
