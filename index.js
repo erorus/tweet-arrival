@@ -69,7 +69,9 @@ function FetchEnroute() {
                 t = (enroute[x].estimatedarrivaltime - secondsBeforeArrival - now);
                 console.log('Setting timer for ' + enroute[x].ident + ' in ' + t + ' seconds');
                 identTimers[enroute[x].ident] = setTimeout(AlertEnroute.bind(null, enroute[x]), t * 1000);
-                SetNextEnrouteTimerBy(t - 5 * 60);
+                if (t > 10 * 60) {
+                    SetNextEnrouteTimerBy(t - 5 * 60);
+                }
             }
         }
 
