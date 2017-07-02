@@ -77,11 +77,11 @@ function FetchEnroute() {
 }
 
 function SetNextEnrouteTimerBy(delaySeconds) {
-    if (delaySeconds <= 0) {
-        return;
+    if (delaySeconds < 300) {
+        delaySeconds = 300;
     }
     var now = Math.floor((new Date()).valueOf() / 1000);
-    if (enrouteTimer.when < now || enrouteTimer.when > now + delaySeconds) {
+    if (enrouteTimer.when <= now || enrouteTimer.when > now + delaySeconds) {
         if (enrouteTimer.when) {
             clearTimeout(enrouteTimer.timer);
         }
