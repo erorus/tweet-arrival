@@ -1,9 +1,9 @@
 const fa = new (require('./flightaware-cached'))(process.env.FLIGHTAWARE_USER, process.env.FLIGHTAWARE_KEY),
     aircraftImage = require('./aircraft-image'),
     async = require('async'),
+    http = require('http'),
+    https = require('https'),
     Twitter = require('twitter');
-
-const secondsBeforeArrival = process.env.SECONDS_AHEAD;
 
 var twitter = !process.env.TWITTER_CONSUMER_KEY ? false : new Twitter({
     consumer_key: process.env.TWITTER_CONSUMER_KEY,
@@ -12,151 +12,171 @@ var twitter = !process.env.TWITTER_CONSUMER_KEY ? false : new Twitter({
     access_token_secret: process.env.TWITTER_ACCESS_TOKEN_SECRET
 });
 
-var identTimers = {};
-var enrouteTimer = {
-    timer: undefined,
-    when: 0,
-};
-
 process.on('exit', function(err) {
     console.log('Exiting!');
 });
 
-FetchEnroute();
 //typeImageTest();
 //typeInfoTest();
 
-function FetchEnroute() {
-    var retryDelay = 10 * 60;
+if (process.argv[2]) {
+    ProcessICAO(process.argv[2]);
+}
 
-    console.log('Fetching enroute data');
-    fa.Enroute({airport: process.env.AIRPORT}, function(err, res) {
-        if (err) {
-            console.log('Could not fetch enroute!');
-            console.log(err);
-            SetNextEnrouteTimerBy(retryDelay);
-            return;
-        }
-
-        var enroute = res.enroute ? res.enroute : [];
-
-        var t, now = Math.floor((new Date()).valueOf() / 1000);
-        var refreshSoon = false;
-
-        for (var x = 0; x < enroute.length; x++) {
-            refreshSoon |= (enroute[x].estimatedarrivaltime < (now + 3600))
-        }
-
-        SetNextEnrouteTimerBy((refreshSoon ? 30 : 60) * 60);
-
-
-        // add enroute timers
-        for (var k in identTimers) {
-            if (!identTimers.hasOwnProperty(k)) {
-                continue;
+function ProcessICAO(icao)
+{
+    var req = http.request({
+            hostname: 'flightaware.com',
+            path: '/live/modes/' + icao.toLowerCase() + '/redirect',
+            method: 'HEAD'
+        }, function (res) {
+            res.resume();
+            if (!res.headers || !res.headers.location) {
+                console.log('error fetching redirect for icao ' + icao);
+                return;
             }
 
-            console.log('Clearing timer for ' + k);
-            clearTimeout(identTimers[k]);
-        }
-
-        identTimers = {};
-        for (var x = 0; x < enroute.length; x++) {
-            if (enroute[x].estimatedarrivaltime - secondsBeforeArrival < now) {
-                continue;
+            var m;
+            if (!(m = res.headers.location.match(/^https?:\/\/flightaware\.com\/live\/flight\/([^\/]+)\/history\/(\d{8})\/(\d{3,4})Z\//))) {
+                console.log('icao ' + icao + ' redirected to unknown format: ' + res.headers.location);
+                return;
             }
-            if (enroute[x].estimatedarrivaltime < (now + 3600) && enroute[x].actualdeparturetime) {
-                t = (enroute[x].estimatedarrivaltime - secondsBeforeArrival - now);
-                console.log('Setting timer for ' + enroute[x].ident + ' in ' + t + ' seconds');
-                identTimers[enroute[x].ident] = setTimeout(AlertEnroute.bind(null, enroute[x]), t * 1000);
-                if (t > 10 * 60) {
-                    SetNextEnrouteTimerBy(t - 5 * 60);
+
+            var flight = {
+                icao: icao.toLowerCase(),
+                ident: m[1],
+                departureStrings: {
+                    date: m[2],
+                    time: m[3]
                 }
+            };
+
+        ProcessFlightByDepartureStrings(flight);
+        }
+    );
+    req.end();
+}
+
+function ProcessFlightByDepartureStrings(flight)
+{
+    if (flight.departureStrings.time.length < 4) {
+        flight.departureStrings.time = '0'.repeat(4 - flight.departureStrings.time.length) + flight.departureStrings.time;
+    }
+
+    flight.departureTime = Date.UTC(
+            parseInt(flight.departureStrings.date.substr(0, 4), 10),
+            parseInt(flight.departureStrings.date.substr(4, 2), 10) - 1,
+            parseInt(flight.departureStrings.date.substr(6), 10),
+            parseInt(flight.departureStrings.time.substr(0, 2), 10),
+            parseInt(flight.departureStrings.time.substr(2), 10),
+            0
+        ) / 1000;
+
+    fa.GetFlightID({
+            ident: flight.ident,
+            departureTime: flight.departureTime
+        }, function (err, result)
+        {
+            if (err || !result) {
+                console.log('Error fetching flight ID for ' + flight.ident + ' ' + flight.departureTime, err);
+                return;
             }
+
+            flight.faFlightID = result;
+
+            ProcessFlightByFAFlightID(flight);
+        }
+    );
+}
+
+function ProcessFlightByFAFlightID(flight)
+{
+    var airlineCode = getAirlineFromIdent(flight.ident);
+
+    var getAirlineFlightInfo = airlineCode ?
+        fa.AirlineFlightInfo.bind(fa, flight.faFlightID) :
+        function(cb) { cb(null, {
+            tailnumber: flight.ident,
+            codeshares: []
+        })};
+
+    async.parallel([ getAirlineFlightInfo, fa.FlightInfoEx.bind(fa, {ident: flight.faFlightID})],
+        function (err, results) {
+            flight.airlineFlightInfo = results[0] || {};
+            flight.flightInfoEx = {};
+
+            if (results[1] && results[1].flights) {
+                flight.flightInfoEx = results[1].flights[0];
+            } else {
+                return ProcessFlightFromADSBExchange(flight);
+            }
+
+            ProcessFullFlight(flight);
+        }
+    );
+}
+
+function ProcessFlightFromADSBExchange(flight) {
+    https.get('https://public-api.adsbexchange.com/VirtualRadar/AircraftList.json?fIcoQ=' + flight.icao, function(res) {
+        if (res.statusCode != 200) {
+            console.log('could not get aircraft info for icao ' + flight.icao + ' from adsbexchange');
+            res.resume();
+            return ProcessFullFlight(flight);
         }
 
+        res.setEncoding('utf8');
+        var data = '';
+        res.on('data', function(chunk) { data += chunk; });
+        res.on('end', function() {
+            var json = JSON.parse(data);
+            if (json.acList && json.acList.length) {
+                flight.flightInfoEx.aircrafttype = json.acList[0].Type;
+            }
+
+            ProcessFullFlight(flight);
+        });
+    }).on('error', function(e) {
+        console.log('Got error fetching adsbexchange info for ' + flight.icao + ': ' + e.message);
+        ProcessFullFlight(flight);
     });
 }
 
-function SetNextEnrouteTimerBy(delaySeconds) {
-    if (delaySeconds < 300) {
-        delaySeconds = 300;
-    }
-    var now = Math.floor((new Date()).valueOf() / 1000);
-    if (enrouteTimer.when <= now || enrouteTimer.when > now + delaySeconds) {
-        if (enrouteTimer.when) {
-            clearTimeout(enrouteTimer.timer);
-        }
-        enrouteTimer.when = now + delaySeconds;
-        enrouteTimer.timer = setTimeout(FetchEnroute, delaySeconds * 1000);
-        console.log('Next enroute fetch in ' + delaySeconds + ' seconds');
-    } else {
-        console.log('Ignoring enroute fetch request in ' + delaySeconds + ' seconds, will fetch in ' + (enrouteTimer.when - now) + ' seconds instead');
-    }
-}
+function ProcessFullFlight(flight) {
+    flight.tailnumber = flight.airlineFlightInfo.tailnumber || flight.ident;
 
-function AlertEnroute(flight) {
-    delete identTimers[flight.ident];
+    var airlineCode = flight.tailnumber != flight.ident ? getAirlineFromIdent(flight.ident) : false;
 
-    var airlineCode = getAirlineFromIdent(flight.ident);
-
-    if (airlineCode) {
-        if (!flight.hasOwnProperty('faFlightID')) {
-            console.log('getting faFlightID for ' + flight.ident);
-            return fa.GetFlightID(
-                {
-                    ident: flight.ident,
-                    departureTime: flight.filed_departuretime || flight.actualdeparturetime
-                }, function (err, result)
-                {
-                    flight.faFlightID = err ? false : result;
-                    AlertEnroute(flight);
-                }
-            );
-        }
-
-        if (!flight.hasOwnProperty('codeshares')) {
-            console.log('getting codeshares for ' + flight.faFlightID);
-            return fa.AirlineFlightInfo(
-                flight.faFlightID, function (err, result)
-                {
-                    flight.codeshares = err ? [] : result.codeshares;
-                    flight.tailnumber = err ? false : result.tailnumber;
-                    AlertEnroute(flight);
-                }
-            );
-        }
+    var imageParams = {};
+    if (flight.airlineFlightInfo.tailnumber) {
+        imageParams.tail = flight.airlineFlightInfo.tailnumber;
+    } else if (flight.flightInfoEx.aircrafttype) {
+        imageParams.type = flight.flightInfoEx.aircrafttype;
     }
 
-    if (!airlineCode && !flight.tailnumber) {
-        flight.tailnumber = flight.ident;
-    }
-
-    var imageParams = { type: flight.aircrafttype };
-    if (flight.tailnumber) {
-        imageParams.tail = flight.tailnumber;
-    }
-
-    if (airlineCode && flight.codeshares) {
+    if (airlineCode && flight.airlineFlightInfo.codeshares) {
         var flightNum = flight.ident.match(/\d+/)[0];
-        for (var x = 0; x < flight.codeshares.length; x++) {
-            if (flight.codeshares[x].substr(flightNum.length * -1) == flightNum) {
-                airlineCode = getAirlineFromIdent(flight.codeshares[x]);
-                flight.bestCodeshare = flight.codeshares[x];
+        for (var x = 0; x < flight.airlineFlightInfo.codeshares.length; x++) {
+            if (flight.airlineFlightInfo.codeshares[x].substr(flightNum.length * -1) == flightNum) {
+                airlineCode = getAirlineFromIdent(flight.airlineFlightInfo.codeshares[x]) || airlineCode;
+                flight.bestCodeshare = flight.airlineFlightInfo.codeshares[x];
                 break;
             }
         }
     }
-    var getAirline = airlineCode ? fa.AirlineInfo.bind(fa, airlineCode) : (function(cb) { return cb(false); });
+
+    var rf = (function(cb) { return cb(false); });
+
+    var getAirline = airlineCode ? fa.AirlineInfo.bind(fa, airlineCode) : rf;
+    var getAircraftType = flight.flightInfoEx.aircrafttype ? fa.AircraftType.bind(fa, flight.flightInfoEx.aircrafttype) : rf;
 
     async.parallel([
         aircraftImage.getAircraftImage.bind(aircraftImage, imageParams),
-        fa.AircraftType.bind(fa, flight.aircrafttype),
+        getAircraftType,
         getAirline,
     ], function(err, results) {
-        var img = results[0];
-        var info = results[1];
-        var airline = results[2];
+        var img = results[0] || {};
+        var info = results[1] || {};
+        var airline = results[2] || {};
 
         var flightName = (flight.bestCodeshare || flight.ident);
 
@@ -171,16 +191,17 @@ function AlertEnroute(flight) {
             if (info.type) {
                 str += info.type + ' ';
             }
-        } else {
-            str += flight.aircrafttype + ' ';
+        } else if (flight.flightInfoEx.aircrafttype) {
+            str += flight.flightInfoEx.aircrafttype + ' ';
         }
         if (flight.tailnumber && flight.tailnumber != flightName) {
             str += '(' + flight.tailnumber + ') ';
         }
-        str += 'from ' + flight.originCity + ' (' + flight.origin + ') ';
-        str += 'arriving at ' + (new Date(flight.estimatedarrivaltime * 1000)).toLocaleTimeString();
+        if (flight.flightInfoEx.originCity) {
+            str += 'from ' + flight.flightInfoEx.originCity + ' (' + flight.flightInfoEx.origin + ') ';
+        }
 
-        SendTweet(str, img);
+        SendTweet(str.replace(/[^\w\)]+$/, ''), img);
     });
 }
 

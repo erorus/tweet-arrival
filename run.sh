@@ -4,4 +4,4 @@ set -a
 . ./environment.txt
 set +a
 
-node index.js
+node index.js $*
