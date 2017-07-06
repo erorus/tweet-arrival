@@ -21,10 +21,39 @@ process.on('exit', function(err) {
 
 if (process.argv[2]) {
     ProcessICAO(process.argv[2]);
+} else if (process.env.HTTP_SERVER_PORT) {
+    var httpServer = http.createServer(ServerCallback);
+    httpServer.listen(process.env.HTTP_SERVER_PORT, process.env.HTTP_SERVER_HOST);
+    console.log('listening at ' + process.env.HTTP_SERVER_HOST + ':' + process.env.HTTP_SERVER_PORT);
 }
 
-function ProcessICAO(icao)
+function ServerCallback(req, res) {
+    var m;
+    if (m = req.url.match(/^\/([a-f0-9]{6})$/)) {
+        return ProcessICAO(m[1], res);
+    }
+    res.writeHead(404, 'Not Found');
+    res.end();
+}
+
+function EndWithResponse(flight, message) {
+    console.log(message);
+    if (flight.httpResponse) {
+        flight.httpResponse.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        flight.httpResponse.end(message, 'utf8');
+    }
+}
+
+function ProcessICAO(icao, httpResponse)
 {
+    var flight = {
+        icao: icao.toLowerCase()
+    };
+
+    if (httpResponse) {
+        flight.httpResponse = httpResponse;
+    }
+
     var req = http.request({
             hostname: 'flightaware.com',
             path: '/live/modes/' + icao.toLowerCase() + '/redirect',
@@ -32,26 +61,21 @@ function ProcessICAO(icao)
         }, function (res) {
             res.resume();
             if (!res.headers || !res.headers.location) {
-                console.log('error fetching redirect for icao ' + icao);
-                return;
+                return EndWithResponse(flight, 'error fetching redirect for icao ' + icao);
             }
 
             var m;
             if (!(m = res.headers.location.match(/^https?:\/\/flightaware\.com\/live\/flight\/([^\/]+)\/history\/(\d{8})\/(\d{3,4})Z\//))) {
-                console.log('icao ' + icao + ' redirected to unknown format: ' + res.headers.location);
-                return;
+                return EndWithResponse(flight, 'icao ' + icao + ' redirected to unknown format: ' + res.headers.location);
             }
 
-            var flight = {
-                icao: icao.toLowerCase(),
-                ident: m[1],
-                departureStrings: {
-                    date: m[2],
-                    time: m[3]
-                }
+            flight.ident = m[1];
+            flight.departureStrings = {
+                date: m[2],
+                time: m[3]
             };
 
-        ProcessFlightByDepartureStrings(flight);
+            ProcessFlightByDepartureStrings(flight);
         }
     );
     req.end();
@@ -78,8 +102,7 @@ function ProcessFlightByDepartureStrings(flight)
         }, function (err, result)
         {
             if (err || !result) {
-                console.log('Error fetching flight ID for ' + flight.ident + ' ' + flight.departureTime, err);
-                return;
+                return EndWithResponse(flight, 'Error fetching flight ID for ' + flight.ident + ' ' + flight.departureTime, err);
             }
 
             flight.faFlightID = result;
@@ -201,7 +224,10 @@ function ProcessFullFlight(flight) {
             str += 'from ' + flight.flightInfoEx.originCity + ' (' + flight.flightInfoEx.origin + ') ';
         }
 
-        SendTweet(str.replace(/[^\w\)]+$/, ''), img);
+        str = str.replace(/[^\w\)]+$/, '');
+        SendTweet(str, img);
+
+        return EndWithResponse(flight, str);
     });
 }
 
