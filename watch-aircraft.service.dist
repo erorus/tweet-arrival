@@ -1,0 +1,15 @@
+[Unit]
+Description=watches aircraft.json to send pings to tweet-arrival
+After=network.target
+
+[Service]
+Type=simple
+User=nobody ## CHANGE THIS
+ExecStart=/usr/bin/node /__PATH__/tweet-arrival/watch-aircraft.js ## INSERT PATH
+EnvironmentFile=/__PATH__/tweet-arrival/environment.txt
+Restart=on-abort
+RestartForceExitStatus=0
+RestartSec=600
+
+[Install]
+WantedBy=multi-user.target

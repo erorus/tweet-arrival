@@ -8,11 +8,15 @@ Uses the [Flightaware API](http://flightaware.com/commercial/flightxml/), for wh
 
 Uses the Twitter API, for which you'll need an API key and secret for the tweeting account.
 
+Requires dump1090 generating aircraft.json, which will be read to determine nearby aircraft.
+
 ## Configuration/Setup
 
 Set the environment variables in `environment.txt`.
 
-You can run it as a systemd service with the supplied `tweet-arrival.service` template.
+You can run the tweeter as a systemd service with the supplied `tweet-arrival.service` template.
+
+You also run the watch-aircraft service with `watch-aircraft.service.dist`
 
 ## License
 
