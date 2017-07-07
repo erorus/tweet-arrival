@@ -69,7 +69,7 @@ function pingTweetArrival(icao) {
         var data = '';
         res.on('data', function(chunk) { data += chunk; });
         res.on('end', function() {
-            console.log(chunk);
+            console.log(icao, data);
         });
     });
 }
