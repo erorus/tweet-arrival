@@ -37,7 +37,7 @@ function ServerCallback(req, res) {
 }
 
 function EndWithResponse(flight, message) {
-    console.log(message);
+    console.log('End -- ' + message);
     if (flight.httpResponse) {
         flight.httpResponse.setHeader('Content-Type', 'text/plain; charset=utf-8');
         flight.httpResponse.end(message, 'utf8');
@@ -61,7 +61,8 @@ function ProcessICAO(icao, httpResponse)
         }, function (res) {
             res.resume();
             if (!res.headers || !res.headers.location) {
-                return EndWithResponse(flight, 'error fetching redirect for icao ' + icao);
+                console.log('Flightaware could not convert icao hex ' + flight.icao + ', trying FlightRadar24');
+                return ProcessFlightFromFlightRadar24(flight);
             }
 
             var m;
@@ -112,6 +113,39 @@ function ProcessFlightByDepartureStrings(flight)
     );
 }
 
+function ProcessFlightByTailNumber(flight)
+{
+    fa.FlightInfoEx({
+        ident: flight.airlineFlightInfo.tailnumber
+    }, function(err, result) {
+        if (result && result.flights) {
+            var now = Math.ceil((new Date()).valueOf() / 1000);
+            for (var f, x = 0; f = result.flights[x]; x++) {
+                if (f.actualdeparturetime <= 0) {
+                    continue;
+                }
+                if (f.actualdeparturetime < (now - 24 * 60 * 60)) {
+                    continue;
+                }
+                if (f.actualarrivaltime > 0 && f.actualarrivaltime < (now - 10 * 60)) {
+                    continue;
+                }
+                delete flight.airlineCode;
+
+                flight.ident = f.ident;
+                flight.faFlightID = f.faFlightID;
+                flight.flightInfoEx = f;
+                break;
+            }
+
+            if (flight.faFlightID) {
+                return ProcessFlightByFAFlightID(flight);
+            }
+        }
+        return ProcessFullFlight(flight);
+    });
+}
+
 function ProcessFlightByFAFlightID(flight)
 {
     var airlineCode = getAirlineFromIdent(flight.ident);
@@ -123,20 +157,76 @@ function ProcessFlightByFAFlightID(flight)
             codeshares: []
         })};
 
-    async.parallel([ getAirlineFlightInfo, fa.FlightInfoEx.bind(fa, {ident: flight.faFlightID})],
-        function (err, results) {
-            flight.airlineFlightInfo = results[0] || {};
-            flight.flightInfoEx = {};
+    var getFlightInfo = flight.flightInfoEx ? function(cb) { cb(null, false); } :
+        fa.FlightInfoEx.bind(fa, {ident: flight.faFlightID});
+
+    async.parallel([ getAirlineFlightInfo, getFlightInfo ], function (err, results) {
+            flight.airlineFlightInfo = results[0] || flight.airlineFlightInfo || {};
+            flight.flightInfoEx = flight.flightInfoEx || {};
 
             if (results[1] && results[1].flights) {
                 flight.flightInfoEx = results[1].flights[0];
-            } else {
+            } else if (!flight.flightInfoEx.aircrafttype) {
+                console.log('No flightInfoEx for faFlightID ' + flight.faFlightID + ', trying ADSBExchange');
                 return ProcessFlightFromADSBExchange(flight);
             }
 
             ProcessFullFlight(flight);
         }
     );
+}
+
+function ProcessFlightFromFlightRadar24(flight) {
+    https.get({
+        hostname: 'api.flightradar24.com',
+        path: '/common/v1/search.json?fetchBy=reg&query=' + flight.icao,
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:54.0) Gecko/20100101 Firefox/54.0',
+            'Referer': 'https://www.flightradar24.com/data/aircraft',
+            'Origin': 'https://www.flightradar24.com',
+            'Accept': 'application/json, text/javascript, */*; q=0.01'
+        }
+    }, function(res) {
+        if (res.statusCode != 200) {
+            res.resume();
+            return EndWithResponse(flight, 'bad status from requesting icao from flightradar24: ' + flight.icao);
+        }
+
+        res.setEncoding('utf8');
+        var data = '';
+        res.on('data', function(chunk) { data += chunk; });
+        res.on('end', function() {
+            var json = JSON.parse(data);
+            if (json.result && json.result.response && json.result.response.aircraft && json.result.response.aircraft.data) {
+                var aircraft = json.result.response.aircraft.data[0];
+                flight.airlineFlightInfo = {};
+                flight.flightInfoEx = {};
+                if (aircraft.registration) {
+                    flight.airlineFlightInfo.tailnumber = flight.ident = aircraft.registration;
+                }
+                if (aircraft.model) {
+                    if (aircraft.model.code) {
+                        flight.flightInfoEx.aircrafttype = aircraft.model.code;
+                    }
+                    if (aircraft.airline && aircraft.airline.icao) {
+                        flight.airlineCode = aircraft.airline.icao;
+                    }
+                }
+
+                if (flight.airlineFlightInfo.tailnumber) {
+                    console.log('found tail number ' + flight.airlineFlightInfo.tailnumber + ' for icao ' + flight.icao + ', checking flightInfoEx for more details');
+                    return ProcessFlightByTailNumber(flight);
+                } else {
+                    return ProcessFullFlight(flight);
+                }
+            }
+
+            return EndWithResponse(flight, 'no json data requesting icao from flightradar24: ' + flight.icao);
+        });
+
+    }).on('error', function(e) {
+        return EndWithResponse(flight, 'error requesting icao from flightradar24: ' + flight.icao);
+    });
 }
 
 function ProcessFlightFromADSBExchange(flight) {
@@ -167,7 +257,7 @@ function ProcessFlightFromADSBExchange(flight) {
 function ProcessFullFlight(flight) {
     flight.tailnumber = flight.airlineFlightInfo.tailnumber || flight.ident;
 
-    var airlineCode = flight.tailnumber != flight.ident ? getAirlineFromIdent(flight.ident) : false;
+    var airlineCode = flight.airlineCode || (flight.tailnumber != flight.ident ? getAirlineFromIdent(flight.ident) : false);
 
     var imageParams = {};
     if (flight.airlineFlightInfo.tailnumber) {
