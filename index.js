@@ -315,7 +315,16 @@ function ProcessFullFlight(flight) {
         }
 
         str = str.replace(/[^\w\)]+$/, '');
-        SendTweet(str, img);
+        try {
+            SendTweet(str, img);
+        } catch (e) {
+            console.log('Caught tweet error, retrying', e);
+            try {
+                SendTweets(str, img);
+            } catch (e) {
+                console.log('Another tweet error, giving up', e);
+            }
+        }
 
         return EndWithResponse(flight, str);
     });
