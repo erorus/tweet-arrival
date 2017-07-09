@@ -262,7 +262,8 @@ function ProcessFullFlight(flight) {
     var imageParams = {};
     if (flight.airlineFlightInfo.tailnumber) {
         imageParams.tail = flight.airlineFlightInfo.tailnumber;
-    } else if (flight.flightInfoEx.aircrafttype) {
+    }
+    if (flight.flightInfoEx.aircrafttype) {
         imageParams.type = flight.flightInfoEx.aircrafttype;
     }
 
@@ -287,7 +288,7 @@ function ProcessFullFlight(flight) {
         getAircraftType,
         getAirline,
     ], function(err, results) {
-        var img = results[0] || {};
+        var img = results[0];
         var info = results[1] || {};
         var airline = results[2] || {};
 
@@ -315,18 +316,7 @@ function ProcessFullFlight(flight) {
         }
 
         str = str.replace(/[^\w\)]+$/, '');
-        try {
-            SendTweet(str, img);
-        } catch (e) {
-            console.log('Caught tweet error, retrying', e);
-            setTimeout(function() {
-                try {
-                    SendTweet(str, img);
-                } catch (e) {
-                    console.log('Another tweet error, giving up', e);
-                }
-            }, 5000);
-        }
+        SendTweet(str, img);
 
         return EndWithResponse(flight, str);
     });
