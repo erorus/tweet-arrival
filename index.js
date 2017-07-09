@@ -319,11 +319,13 @@ function ProcessFullFlight(flight) {
             SendTweet(str, img);
         } catch (e) {
             console.log('Caught tweet error, retrying', e);
-            try {
-                SendTweet(str, img);
-            } catch (e) {
-                console.log('Another tweet error, giving up', e);
-            }
+            setTimeout(function() {
+                try {
+                    SendTweet(str, img);
+                } catch (e) {
+                    console.log('Another tweet error, giving up', e);
+                }
+            }, 5000);
         }
 
         return EndWithResponse(flight, str);
