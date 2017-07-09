@@ -320,7 +320,7 @@ function ProcessFullFlight(flight) {
         } catch (e) {
             console.log('Caught tweet error, retrying', e);
             try {
-                SendTweets(str, img);
+                SendTweet(str, img);
             } catch (e) {
                 console.log('Another tweet error, giving up', e);
             }
