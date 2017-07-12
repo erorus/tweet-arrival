@@ -70,6 +70,8 @@ function ProcessICAO(icao, httpResponse)
                 return EndWithResponse(flight, 'icao ' + icao + ' redirected to unknown format: ' + res.headers.location);
             }
 
+            flight.url = res.headers.location.replace(/^http:/, 'https:');
+
             flight.ident = m[1];
             flight.departureStrings = {
                 date: m[2],
@@ -282,15 +284,18 @@ function ProcessFullFlight(flight) {
 
     var getAirline = airlineCode ? fa.AirlineInfo.bind(fa, airlineCode) : rf;
     var getAircraftType = flight.flightInfoEx.aircrafttype ? fa.AircraftType.bind(fa, flight.flightInfoEx.aircrafttype) : rf;
+    var getAircraftOwner = (flight.flightInfoEx.originCity || !flight.tailnumber) ? rf : fa.TailOwner.bind(fa, flight.tailnumber);
 
     async.parallel([
         aircraftImage.getAircraftImage.bind(aircraftImage, imageParams),
         getAircraftType,
         getAirline,
+        getAircraftOwner,
     ], function(err, results) {
         var img = results[0];
         var info = results[1] || {};
         var airline = results[2] || {};
+        var owner = results[3] || {};
 
         var flightName = (flight.bestCodeshare || flight.ident);
 
@@ -313,7 +318,12 @@ function ProcessFullFlight(flight) {
         }
         if (flight.flightInfoEx.originCity) {
             str += 'from ' + flight.flightInfoEx.originCity + ' (' + flight.flightInfoEx.origin + ') ';
+        } else if (owner.owner) {
+            str += 'owned by ' + (/[a-z]/.test(owner.owner) ? owner.owner :
+                    owner.owner.toLowerCase().replace(/(?:^|\s)\w/g, function(m) { return m.toUpperCase(); })) + ' ';
         }
+
+        str += flight.url || 'https://flightaware.com/live/flight/' + flight.ident;
 
         str = str.replace(/[^\w\)]+$/, '');
         SendTweet(str, img);
